@@ -161,6 +161,11 @@ func (config playerConfig) getNFunction() (string, error) {
 		name = string(nameResult[1])
 	}
 
+	return config.extraFunction(name)
+
+}
+
+func (config playerConfig) extraFunction(name string) (string, error) {
 	// find the beginning of the function
 	def := []byte(name + "=function(")
 	start := bytes.Index(config, def)
@@ -171,13 +176,29 @@ func (config playerConfig) getNFunction() (string, error) {
 	// start after the first curly bracket
 	pos := start + bytes.IndexByte(config[start:], '{') + 1
 
+	var strChar byte
+
 	// find the bracket closing the function
 	for brackets := 1; brackets > 0; pos++ {
-		switch config[pos] {
+		b := config[pos]
+		switch b {
 		case '{':
-			brackets++
+			if strChar == 0 {
+				brackets++
+			}
 		case '}':
-			brackets--
+			if strChar == 0 {
+				brackets--
+			}
+		case '`', '"', '\'':
+			if config[pos-1] == '\\' && config[pos-2] != '\\' {
+				continue
+			}
+			if strChar == 0 {
+				strChar = b
+			} else if strChar == b {
+				strChar = 0
+			}
 		}
 	}
 
@@ -200,24 +221,24 @@ func (config playerConfig) decrypt(cyphertext []byte) ([]byte, error) {
 }
 
 /*
-	parses decipher operations from https://youtube.com/s/player/4fbb4d5b/player_ias.vflset/en_US/base.js
+parses decipher operations from https://youtube.com/s/player/4fbb4d5b/player_ias.vflset/en_US/base.js
 
-	var Mt={
-	splice:function(a,b){a.splice(0,b)},
-	reverse:function(a){a.reverse()},
-	EQ:function(a,b){var c=a[0];a[0]=a[b%a.length];a[b%a.length]=c}};
+var Mt={
+splice:function(a,b){a.splice(0,b)},
+reverse:function(a){a.reverse()},
+EQ:function(a,b){var c=a[0];a[0]=a[b%a.length];a[b%a.length]=c}};
 
-	a=a.split("");
-	Mt.splice(a,3);
-	Mt.EQ(a,39);
-	Mt.splice(a,2);
-	Mt.EQ(a,1);
-	Mt.splice(a,1);
-	Mt.EQ(a,35);
-	Mt.EQ(a,51);
-	Mt.splice(a,2);
-	Mt.reverse(a,52);
-	return a.join("")
+a=a.split("");
+Mt.splice(a,3);
+Mt.EQ(a,39);
+Mt.splice(a,2);
+Mt.EQ(a,1);
+Mt.splice(a,1);
+Mt.EQ(a,35);
+Mt.EQ(a,51);
+Mt.splice(a,2);
+Mt.reverse(a,52);
+return a.join("")
 */
 func (config playerConfig) parseDecipherOps() (operations []DecipherOperation, err error) {
 	objResult := actionsObjRegexp.FindSubmatch(config)
