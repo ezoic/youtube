@@ -30,7 +30,7 @@ var (
 )
 
 // DefaultClient type to use. No reason to change but you could if you wanted to.
-var DefaultClient = WebClient
+var DefaultClient = IOS
 
 // Client offers methods to download video metadata and video streams.
 type Client struct {
@@ -183,7 +183,7 @@ type clientInfo struct {
 
 var (
 	// WebClient, better to use Android client but go ahead.
-	WebClient = clientInfo{
+	IOS = clientInfo{
 		name:         "IOS",
 		version:      "19.45.4",
 		key:          "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
@@ -582,7 +582,7 @@ func (c *Client) httpPost(ctx context.Context, url string, body interface{}) (*h
 	req.Header.Set("User-Agent", c.client.userAgent)
 	req.Header.Set("Content-Type", "application/json")
 	//req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("X-Goog-Visitor-Id", "CgtzbXhmc3dkdlhVZyjIiIW6BjIKCgJVUxIEGgAgEg=='")
+	// req.Header.Set("X-Goog-Visitor-Id", "CgtzbXhmc3dkdlhVZyjIiIW6BjIKCgJVUxIEGgAgEg=='")
 
 	log.Printf("data: %s. headers: %s", data, req.Header)
 	resp, err := c.httpDo(req)
