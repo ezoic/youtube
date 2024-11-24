@@ -182,7 +182,6 @@ type clientInfo struct {
 }
 
 var (
-	// WebClient, better to use Android client but go ahead.
 	IOS = clientInfo{
 		name:         "IOS",
 		version:      "19.45.4",
@@ -193,6 +192,14 @@ var (
 		deviceModel:  "iPhone16,2",
 		osName:       "iPhone",
 		osVersion:    "18.1.0.22B83",
+	}
+
+	// WebClient, better to use Android client but go ahead.
+	WebClient = clientInfo{
+		name:      "WEB",
+		version:   "2.20220801.00.00",
+		key:       "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+		userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
 	}
 
 	// AndroidClient, download go brrrrrr.
