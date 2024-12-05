@@ -83,8 +83,6 @@ func (c *Client) videoFromID(ctx context.Context, id string) (*Video, error) {
 		ID: id,
 	}
 
-	// If the uploader has disabled embedding the video on other sites, parse video page
-	// additional parameters are required to access clips with sensitiv content
 	html, err := c.httpGetBodyBytes(ctx, "https://www.youtube.com/watch?v="+id+"&bpctr=9999999999&has_verified=1")
 	if err != nil {
 		return nil, err
@@ -102,23 +100,7 @@ func (c *Client) videoFromID(ctx context.Context, id string) (*Video, error) {
 		return nil, err
 	}
 
-	// return early if all good
-	if err = v.parseVideoInfo(body); err == nil {
-		return &v, nil
-	}
-
-	// If the uploader has disabled embedding the video on other sites, parse video page
-	if errors.Is(err, ErrNotPlayableInEmbed) {
-		// additional parameters are required to access clips with sensitiv content
-		html, err := c.httpGetBodyBytes(ctx, "https://www.youtube.com/watch?v="+id+"&bpctr=9999999999&has_verified=1")
-		if err != nil {
-			return nil, err
-		}
-
-		return &v, v.parseVideoPage(html)
-	}
-
-	// undefined error
+	err = v.parseVideoInfo(body)
 	return &v, err
 }
 
