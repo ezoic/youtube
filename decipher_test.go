@@ -8,6 +8,9 @@ import (
 //go:embed testdata/player_url.js
 var playerConfig1 []byte
 
+//go:embed testdata/player_base_62ccfae7.js
+var playerConfig2 []byte
+
 func Test_playerConfig_getNFunctionName(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -17,6 +20,11 @@ func Test_playerConfig_getNFunctionName(t *testing.T) {
 		{
 			name:    "decipher correctly please",
 			config:  playerConfig1,
+			wantErr: false,
+		},
+		{
+			name:    "decipher correctly please",
+			config:  playerConfig2,
 			wantErr: false,
 		},
 	}
@@ -48,6 +56,15 @@ func Test_playerConfig_extraFunction(t *testing.T) {
 			args: args{
 				name: "gna",
 			},
+			wantErr: false,
+		},
+		{
+			name:   "",
+			config: playerConfig2,
+			args: args{
+				name: "hna",
+			},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -58,6 +75,40 @@ func Test_playerConfig_extraFunction(t *testing.T) {
 				return
 			}
 			t.Log(got)
+		})
+	}
+}
+
+func Test_playerConfig_decodeNsig(t *testing.T) {
+	type args struct {
+		encoded string
+	}
+	tests := []struct {
+		name    string
+		config  playerConfig
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "decipher correctly please",
+			config: playerConfig2,
+			args: args{
+				"heQfGvtB42Dx8jRvOPi",
+			},
+			want: "jZlTeSh50JgiqQ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.config.decodeNsig(tt.args.encoded)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("playerConfig.decodeNsig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("playerConfig.decodeNsig() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

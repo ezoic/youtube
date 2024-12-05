@@ -40,7 +40,7 @@ func (c *Client) decipherURL(ctx context.Context, videoID string, cipher string)
 	}
 	query.Add(params.Get("sp"), string(bs))
 
-	query, err = c.decryptNParam(config, query)
+	query, err = decryptNParam(config, query)
 	if err != nil {
 		return "", err
 	}
@@ -67,18 +67,16 @@ func (c *Client) unThrottle(ctx context.Context, videoID string, urlString strin
 		writeArtifact("video-"+videoID+".url", []byte(uri.String()))
 	}
 
-	query, err := c.decryptNParam(config, uri.Query())
+	query, err := decryptNParam(config, uri.Query())
 	if err != nil {
 		return "", err
 	}
 
 	uri.RawQuery = query.Encode()
-	log.Println("before", urlString)
-	log.Println("after", uri.String())
 	return uri.String(), nil
 }
 
-func (c *Client) decryptNParam(config playerConfig, query url.Values) (url.Values, error) {
+func decryptNParam(config playerConfig, query url.Values) (url.Values, error) {
 	// decrypt n-parameter
 	nSig := query.Get("n")
 	log := Logger.With("n", nSig)

@@ -30,7 +30,7 @@ var (
 )
 
 // DefaultClient type to use. No reason to change but you could if you wanted to.
-var DefaultClient = AndroidClient
+var DefaultClient = MobileWebClient
 
 // Client offers methods to download video metadata and video streams.
 type Client struct {
@@ -48,6 +48,8 @@ type Client struct {
 	playerCache playerCache
 
 	client *clientInfo
+
+	ytConfig YTConfig
 
 	consentID string
 }
@@ -81,6 +83,20 @@ func (c *Client) videoFromID(ctx context.Context, id string) (*Video, error) {
 		ID: id,
 	}
 
+	// If the uploader has disabled embedding the video on other sites, parse video page
+	// additional parameters are required to access clips with sensitiv content
+	html, err := c.httpGetBodyBytes(ctx, "https://www.youtube.com/watch?v="+id+"&bpctr=9999999999&has_verified=1")
+	if err != nil {
+		return nil, err
+	}
+
+	ytConfig, err := extractYTConfig(html)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract yt config: %w", err)
+	}
+
+	c.ytConfig = ytConfig
+
 	body, err := c.videoDataByInnertube(ctx, id)
 	if err != nil {
 		return nil, err
@@ -100,28 +116,6 @@ func (c *Client) videoFromID(ctx context.Context, id string) (*Video, error) {
 		}
 
 		return &v, v.parseVideoPage(html)
-	}
-
-	// If the uploader marked the video as inappropriate for some ages, use embed player
-	if errors.Is(err, ErrLoginRequired) {
-		c.client = &EmbeddedClient
-
-		bodyEmbed, errEmbed := c.videoDataByInnertube(ctx, id)
-		if errEmbed == nil {
-			errEmbed = v.parseVideoInfo(bodyEmbed)
-		}
-
-		if errEmbed == nil {
-			return &v, nil
-		}
-
-		// private video clearly not age-restricted and thus should be explicit
-		if errEmbed == ErrVideoPrivate {
-			return &v, errEmbed
-		}
-
-		// wrapping error so its clear whats happened
-		return &v, fmt.Errorf("can't bypass age restriction: %w", errEmbed)
 	}
 
 	// undefined error
@@ -195,9 +189,10 @@ var (
 	}
 
 	MobileWebClient = clientInfo{
-		name:      "MWEB",
-		version:   "2.20241202.07.00",
-		userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
+		name:         "MWEB",
+		ytClientName: "2",
+		version:      "2.20241202.07.00",
+		userAgent:    "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
 	}
 
 	// WebClient, better to use Android client but go ahead.
@@ -237,7 +232,7 @@ func (c *Client) videoDataByInnertube(ctx context.Context, id string) ([]byte, e
 		//Params:         playerParams,
 		PlaybackContext: &playbackContext{
 			ContentPlaybackContext: contentPlaybackContext{
-				SignatureTimestamp: "20047",
+				SignatureTimestamp: strconv.Itoa(c.ytConfig.SignatureTimestamp),
 				HTML5Preference:    "HTML5_PREF_WANTS",
 			},
 		},
