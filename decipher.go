@@ -224,40 +224,94 @@ func (config playerConfig) getNFunctionName() (string, error) {
 }
 
 func (config playerConfig) extraFunction(name string) (string, error) {
-	// find the beginning of the function
+	// Find the beginning of the function
 	def := []byte(name + "=function(")
 	start := bytes.Index(config, def)
-	if start < 1 {
-		return "", fmt.Errorf("unable to extract n-function body: looking for '%s'", def)
+	if start < 0 {
+		return "", fmt.Errorf("unable to extract function: looking for '%s'", def)
 	}
 
-	// start after the first curly bracket
-	pos := start + bytes.IndexByte(config[start:], '{') + 1
+	pos := start
+	length := len(config)
+	var brackets int
+	var inString bool
+	var stringChar byte
+	var inComment bool
+	var inRegex bool
+	var prevChar byte
 
-	var strChar byte
+	// Find the complete function definition
+	for pos < length {
+		char := config[pos]
 
-	// find the bracket closing the function
-	for brackets := 1; brackets > 0; pos++ {
-		b := config[pos]
-		switch b {
-		case '{':
-			if strChar == 0 {
-				brackets++
-			}
-		case '}':
-			if strChar == 0 {
-				brackets--
-			}
-		case '`', '"', '\'':
-			if config[pos-1] == '\\' && config[pos-2] != '\\' {
-				continue
-			}
-			if strChar == 0 {
-				strChar = b
-			} else if strChar == b {
-				strChar = 0
+		// Handle escape sequences
+		if (inString || inRegex) && prevChar == '\\' {
+			pos++
+			prevChar = char
+			continue
+		}
+
+		// Handle string literals
+		if (char == '"' || char == '\'' || char == '`') && !inComment && !inRegex {
+			if !inString {
+				inString = true
+				stringChar = char
+			} else if char == stringChar {
+				inString = false
 			}
 		}
+
+		// Handle regular expressions
+		if char == '/' && !inString && !inComment {
+			if !inRegex && (prevChar == '=' || prevChar == '(' || prevChar == ',' || prevChar == ':') {
+				inRegex = true
+			} else if inRegex {
+				inRegex = false
+			}
+		}
+
+		// Handle comments
+		if !inString && !inRegex {
+			if char == '/' && pos+1 < length {
+				if config[pos+1] == '/' {
+					// Skip to end of line
+					for pos < length && config[pos] != '\n' {
+						pos++
+					}
+					continue
+				}
+				if config[pos+1] == '*' {
+					inComment = true
+					pos += 2
+					continue
+				}
+			}
+			if inComment && char == '*' && pos+1 < length && config[pos+1] == '/' {
+				inComment = false
+				pos += 2
+				continue
+			}
+		}
+
+		// Count brackets outside of strings, comments, and regexes
+		if !inString && !inComment && !inRegex {
+			if char == '{' {
+				brackets++
+			} else if char == '}' {
+				brackets--
+				if brackets == 0 {
+					pos++
+					break
+				}
+			}
+		}
+
+		prevChar = char
+		pos++
+	}
+
+	if brackets != 0 {
+		return "", fmt.Errorf("unmatched brackets in function definition")
 	}
 
 	return string(config[start:pos]), nil
