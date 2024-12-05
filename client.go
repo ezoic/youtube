@@ -30,7 +30,7 @@ var (
 )
 
 // DefaultClient type to use. No reason to change but you could if you wanted to.
-var DefaultClient = IOS
+var DefaultClient = AndroidClient
 
 // Client offers methods to download video metadata and video streams.
 type Client struct {
@@ -194,6 +194,12 @@ var (
 		osVersion:    "18.1.0.22B83",
 	}
 
+	MobileWebClient = clientInfo{
+		name:      "MWEB",
+		version:   "2.20241202.07.00",
+		userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
+	}
+
 	// WebClient, better to use Android client but go ahead.
 	WebClient = clientInfo{
 		name:      "WEB",
@@ -205,10 +211,12 @@ var (
 	// AndroidClient, download go brrrrrr.
 	AndroidClient = clientInfo{
 		name:           "ANDROID",
-		version:        "19.09.37",
+		version:        "19.44.38",
 		key:            "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-		userAgent:      "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+		userAgent:      "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip",
 		androidVersion: 30,
+		osName:         "Android",
+		osVersion:      "11",
 	}
 
 	// EmbeddedClient, not really tested.
@@ -473,21 +481,22 @@ func (c *Client) GetStreamURL(video *Video, format *Format) (string, error) {
 
 // GetStreamURLContext returns the url for a specific format with a context
 func (c *Client) GetStreamURLContext(ctx context.Context, video *Video, format *Format) (string, error) {
-	log.Println("GetStreamURLContext?")
 	if format == nil {
 		return "", ErrNoFormat
 	}
-	log.Println(format.URL)
 
 	c.assureClient()
 
 	if format.URL != "" {
-		//if c.client.androidVersion > 0 {
-		//log.Println("androidVersion > 0 ?")
-		return format.URL, nil
-		//}
+		fmtURL, err := url.Parse(format.URL)
+		if err != nil {
+			return "", fmt.Errorf("unable to parse url=%s. err=%s", format.URL, err)
+		}
+		if fmtURL.Query().Get("n") != "" {
+			return c.unThrottle(ctx, video.ID, format.URL)
+		}
 
-		return c.unThrottle(ctx, video.ID, format.URL)
+		return format.URL, nil
 	}
 
 	// TODO: check rest of this function, is it redundant?

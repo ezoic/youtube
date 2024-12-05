@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
+	"github.com/dlclark/regexp2"
 	"github.com/dop251/goja"
 )
 
@@ -109,8 +111,24 @@ const (
 )
 
 var (
-	nFunctionNameRegexp = regexp.MustCompile("\\.get\\(\"n\"\\)\\)&&\\(b=([a-zA-Z0-9$]{0,3})\\[(\\d+)\\](.+)\\|\\|([a-zA-Z0-9]{0,3})")
-	actionsObjRegexp    = regexp.MustCompile(fmt.Sprintf(
+	nFunctionNameRegexp = regexp2.MustCompile(`(?x)
+            (?:
+                \.get\("n"\)\)&&\(b=|
+                (?:
+                    b=String\.fromCharCode\(110\)|
+                    (?P<str_idx>[a-zA-Z0-9_$.]+)&&\(b="nn"\[\+(\k<str_idx>)\]
+                )
+                (?:
+                    ,[a-zA-Z0-9_$]+\(a\))?,c=a\.
+                    (?:
+                        get\(b\)|
+                        [a-zA-Z0-9_$]+\[b\]\|\|null
+                    )\)&&\(c=|
+                \b(?P<var>[a-zA-Z0-9_$]+)=
+            )(?P<nfunc>[a-zA-Z0-9_$]+)(?:\[(?P<idx>\d+)\])?\([a-zA-Z]\)
+            (?(var),[a-zA-Z0-9_$]+\.set\("n"\,(\k<var>)\),(\k<nfunc>)\.length)`, regexp2.RE2)
+
+	actionsObjRegexp = regexp.MustCompile(fmt.Sprintf(
 		"var (%s)=\\{((?:(?:%s%s|%s%s|%s%s),?\\n?)+)\\};", jsvarStr, jsvarStr, swapStr, jsvarStr, spliceStr, jsvarStr, reverseStr))
 
 	actionsFuncRegexp = regexp.MustCompile(fmt.Sprintf(
@@ -153,20 +171,56 @@ func evalJavascript(jsFunction, arg string) (string, error) {
 }
 
 func (config playerConfig) getNFunction() (string, error) {
-	nameResult := nFunctionNameRegexp.FindSubmatch(config)
-	if len(nameResult) == 0 {
-		return "", errors.New("unable to extract n-function name")
+	funcName, err := config.getNFunctionName()
+	if err != nil {
+		return "", err
 	}
 
-	var name string
-	if idx, _ := strconv.Atoi(string(nameResult[2])); idx == 0 {
-		name = string(nameResult[4])
+	return config.extraFunction(funcName)
+}
+
+func (config playerConfig) getNFunctionName() (string, error) {
+	m, _ := nFunctionNameRegexp.FindStringMatch(string(config))
+	if m == nil {
+		return "", errors.New("nfunction name was not found")
+	}
+
+	funcNameCaptures := m.GroupByName("nfunc").Captures
+	if len(funcNameCaptures) == 0 {
+		return "", errors.New("nfunc group capture was not found")
+	}
+	initialFuncName := funcNameCaptures[0].String()
+
+	idxCaptures := m.GroupByName("idx").Captures
+	idx := -1
+	if len(idxCaptures) > 0 {
+		var err error
+		idx, err = strconv.Atoi(idxCaptures[0].String())
+		if err != nil {
+			return "", fmt.Errorf("unable to parse the func index: %w", err)
+		}
 	} else {
-		name = string(nameResult[1])
+		return initialFuncName, nil
 	}
 
-	return config.extraFunction(name)
+	varRegexString := fmt.Sprintf(`var %s\s*=\s*(\[.+?\])\s*[,;]`, regexp.QuoteMeta(initialFuncName))
 
+	varRegex, err := regexp2.Compile(varRegexString, regexp2.RE2)
+	if err != nil {
+		return "", fmt.Errorf("failed to compile the func regex: %w", err)
+	}
+
+	varRegexMatch, _ := varRegex.FindStringMatch(string(config))
+	if varRegexMatch == nil {
+		return "", errors.New("unable to find the func from funcRegexMatch")
+	}
+	parts := strings.Split(varRegexMatch.String(), "=")
+	value := strings.Trim(parts[1], "[];")
+	list := strings.Split(value, ",")
+
+	finalFuncName := list[idx]
+
+	return finalFuncName, nil
 }
 
 func (config playerConfig) extraFunction(name string) (string, error) {
