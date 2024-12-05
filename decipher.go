@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
+	"github.com/dlclark/regexp2"
 	"github.com/dop251/goja"
 )
 
@@ -38,7 +40,7 @@ func (c *Client) decipherURL(ctx context.Context, videoID string, cipher string)
 	}
 	query.Add(params.Get("sp"), string(bs))
 
-	query, err = c.decryptNParam(config, query)
+	query, err = decryptNParam(config, query)
 	if err != nil {
 		return "", err
 	}
@@ -65,18 +67,16 @@ func (c *Client) unThrottle(ctx context.Context, videoID string, urlString strin
 		writeArtifact("video-"+videoID+".url", []byte(uri.String()))
 	}
 
-	query, err := c.decryptNParam(config, uri.Query())
+	query, err := decryptNParam(config, uri.Query())
 	if err != nil {
 		return "", err
 	}
 
 	uri.RawQuery = query.Encode()
-	log.Println("before", urlString)
-	log.Println("after", uri.String())
 	return uri.String(), nil
 }
 
-func (c *Client) decryptNParam(config playerConfig, query url.Values) (url.Values, error) {
+func decryptNParam(config playerConfig, query url.Values) (url.Values, error) {
 	// decrypt n-parameter
 	nSig := query.Get("n")
 	log := Logger.With("n", nSig)
@@ -109,8 +109,24 @@ const (
 )
 
 var (
-	nFunctionNameRegexp = regexp.MustCompile("\\.get\\(\"n\"\\)\\)&&\\(b=([a-zA-Z0-9$]{0,3})\\[(\\d+)\\](.+)\\|\\|([a-zA-Z0-9]{0,3})")
-	actionsObjRegexp    = regexp.MustCompile(fmt.Sprintf(
+	nFunctionNameRegexp = regexp2.MustCompile(`(?x)
+            (?:
+                \.get\("n"\)\)&&\(b=|
+                (?:
+                    b=String\.fromCharCode\(110\)|
+                    (?P<str_idx>[a-zA-Z0-9_$.]+)&&\(b="nn"\[\+(\k<str_idx>)\]
+                )
+                (?:
+                    ,[a-zA-Z0-9_$]+\(a\))?,c=a\.
+                    (?:
+                        get\(b\)|
+                        [a-zA-Z0-9_$]+\[b\]\|\|null
+                    )\)&&\(c=|
+                \b(?P<var>[a-zA-Z0-9_$]+)=
+            )(?P<nfunc>[a-zA-Z0-9_$]+)(?:\[(?P<idx>\d+)\])?\([a-zA-Z]\)
+            (?(var),[a-zA-Z0-9_$]+\.set\("n"\,(\k<var>)\),(\k<nfunc>)\.length)`, regexp2.RE2)
+
+	actionsObjRegexp = regexp.MustCompile(fmt.Sprintf(
 		"var (%s)=\\{((?:(?:%s%s|%s%s|%s%s),?\\n?)+)\\};", jsvarStr, jsvarStr, swapStr, jsvarStr, spliceStr, jsvarStr, reverseStr))
 
 	actionsFuncRegexp = regexp.MustCompile(fmt.Sprintf(
@@ -153,57 +169,147 @@ func evalJavascript(jsFunction, arg string) (string, error) {
 }
 
 func (config playerConfig) getNFunction() (string, error) {
-	nameResult := nFunctionNameRegexp.FindSubmatch(config)
-	if len(nameResult) == 0 {
-		return "", errors.New("unable to extract n-function name")
+	funcName, err := config.getNFunctionName()
+	if err != nil {
+		return "", err
 	}
 
-	var name string
-	if idx, _ := strconv.Atoi(string(nameResult[2])); idx == 0 {
-		name = string(nameResult[4])
+	return config.extraFunction(funcName)
+}
+
+func (config playerConfig) getNFunctionName() (string, error) {
+	m, _ := nFunctionNameRegexp.FindStringMatch(string(config))
+	if m == nil {
+		return "", errors.New("nfunction name was not found")
+	}
+
+	funcNameCaptures := m.GroupByName("nfunc").Captures
+	if len(funcNameCaptures) == 0 {
+		return "", errors.New("nfunc group capture was not found")
+	}
+	initialFuncName := funcNameCaptures[0].String()
+
+	idxCaptures := m.GroupByName("idx").Captures
+	idx := -1
+	if len(idxCaptures) > 0 {
+		var err error
+		idx, err = strconv.Atoi(idxCaptures[0].String())
+		if err != nil {
+			return "", fmt.Errorf("unable to parse the func index: %w", err)
+		}
 	} else {
-		name = string(nameResult[1])
+		return initialFuncName, nil
 	}
 
-	return config.extraFunction(name)
+	varRegexString := fmt.Sprintf(`var %s\s*=\s*(\[.+?\])\s*[,;]`, regexp.QuoteMeta(initialFuncName))
 
+	varRegex, err := regexp2.Compile(varRegexString, regexp2.RE2)
+	if err != nil {
+		return "", fmt.Errorf("failed to compile the func regex: %w", err)
+	}
+
+	varRegexMatch, _ := varRegex.FindStringMatch(string(config))
+	if varRegexMatch == nil {
+		return "", errors.New("unable to find the func from funcRegexMatch")
+	}
+	parts := strings.Split(varRegexMatch.String(), "=")
+	value := strings.Trim(parts[1], "[];")
+	list := strings.Split(value, ",")
+
+	finalFuncName := list[idx]
+
+	return finalFuncName, nil
 }
 
 func (config playerConfig) extraFunction(name string) (string, error) {
-	// find the beginning of the function
+	// Find the beginning of the function
 	def := []byte(name + "=function(")
 	start := bytes.Index(config, def)
-	if start < 1 {
-		return "", fmt.Errorf("unable to extract n-function body: looking for '%s'", def)
+	if start < 0 {
+		return "", fmt.Errorf("unable to extract function: looking for '%s'", def)
 	}
 
-	// start after the first curly bracket
-	pos := start + bytes.IndexByte(config[start:], '{') + 1
+	pos := start
+	length := len(config)
+	var brackets int
+	var inString bool
+	var stringChar byte
+	var inComment bool
+	var inRegex bool
+	var prevChar byte
 
-	var strChar byte
+	// Find the complete function definition
+	for pos < length {
+		char := config[pos]
 
-	// find the bracket closing the function
-	for brackets := 1; brackets > 0; pos++ {
-		b := config[pos]
-		switch b {
-		case '{':
-			if strChar == 0 {
-				brackets++
-			}
-		case '}':
-			if strChar == 0 {
-				brackets--
-			}
-		case '`', '"', '\'':
-			if config[pos-1] == '\\' && config[pos-2] != '\\' {
-				continue
-			}
-			if strChar == 0 {
-				strChar = b
-			} else if strChar == b {
-				strChar = 0
+		// Handle escape sequences
+		if (inString || inRegex) && prevChar == '\\' {
+			pos++
+			prevChar = char
+			continue
+		}
+
+		// Handle string literals
+		if (char == '"' || char == '\'' || char == '`') && !inComment && !inRegex {
+			if !inString {
+				inString = true
+				stringChar = char
+			} else if char == stringChar {
+				inString = false
 			}
 		}
+
+		// Handle regular expressions
+		if char == '/' && !inString && !inComment {
+			if !inRegex && (prevChar == '=' || prevChar == '(' || prevChar == ',' || prevChar == ':') {
+				inRegex = true
+			} else if inRegex {
+				inRegex = false
+			}
+		}
+
+		// Handle comments
+		if !inString && !inRegex {
+			if char == '/' && pos+1 < length {
+				if config[pos+1] == '/' {
+					// Skip to end of line
+					for pos < length && config[pos] != '\n' {
+						pos++
+					}
+					continue
+				}
+				if config[pos+1] == '*' {
+					inComment = true
+					pos += 2
+					continue
+				}
+			}
+			if inComment && char == '*' && pos+1 < length && config[pos+1] == '/' {
+				inComment = false
+				pos += 2
+				continue
+			}
+		}
+
+		// Count brackets outside of strings, comments, and regexes
+		if !inString && !inComment && !inRegex {
+			if char == '{' {
+				brackets++
+			} else if char == '}' {
+				brackets--
+				if brackets == 0 {
+					pos++
+					break
+				}
+			}
+		}
+
+		prevChar = char
+		pos++
+	}
+
+	if brackets != 0 {
+		return "", fmt.Errorf("unmatched brackets in function definition")
 	}
 
 	return string(config[start:pos]), nil

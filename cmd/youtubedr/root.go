@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	homedir "github.com/mitchellh/go-homedir"
@@ -28,6 +29,7 @@ Use the HTTP_PROXY environment variable to set a HTTP or SOCSK5 proxy. The proxy
 }
 
 func init() {
+	log.Default().SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.OnInitialize(initConfig)
 
 	// Here you will define your flags and configuration settings.
