@@ -30,7 +30,7 @@ var (
 )
 
 // DefaultClient type to use. No reason to change but you could if you wanted to.
-var DefaultClient = MobileWebClient
+var DefaultClient = IOS
 
 // Client offers methods to download video metadata and video streams.
 type Client struct {
